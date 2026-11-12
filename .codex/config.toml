@@ -1,0 +1,3 @@
+# Use the course's .agents/skills instead of the global Matt Pocock plugin.
+[plugins."mattpocock-skills@claude-plugins-official"]
+enabled = false

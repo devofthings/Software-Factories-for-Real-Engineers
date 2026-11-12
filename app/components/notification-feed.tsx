@@ -117,7 +117,7 @@ export function NotificationBell() {
   function toggle() {
     // Opening marks everything seen, loaded or not. Seen isn't read, so
     // unread rows stay bold.
-    if (!open) void feed.markAllSeen();
+    if (!open) void feed.refresh().then(() => feed.markAllSeen());
     setOpen(!open);
   }
 

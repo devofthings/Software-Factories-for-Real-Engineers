@@ -73,10 +73,14 @@ export function knockNotificationFeed(
 
   const unsubscribeStore = feed.store.subscribe(publish);
   feed.listenForUpdates();
-  void feed.fetch().then((result) => {
-    firstPage = !result || result.status === "error" ? "error" : "ready";
+  async function refresh() {
+    const result = await feed.fetch();
+    if (!result) return;
+    if (result.status !== "error") firstPage = "ready";
+    else if (firstPage !== "ready") firstPage = "error";
     publish();
-  });
+  }
+  void refresh();
 
   return {
     getState: () => state,
@@ -84,6 +88,7 @@ export function knockNotificationFeed(
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    refresh,
     async loadMore() {
       // Knock skips this while another fetch is in flight, and when the
       // `after` cursor says there's nothing older.

@@ -10,9 +10,15 @@ import {
   RefundStatus,
 } from "~/db/schema";
 import { setCurrentUserId } from "~/lib/session";
+import {
+  fakeNotifications,
+  type FakeNotifications,
+} from "~/lib/notifications.fake.server";
+import { sendEmail } from "~/lib/mailer.server";
 
 const testState = vi.hoisted(() => ({
   db: undefined as ReturnType<typeof createTestDb> | undefined,
+  notifications: undefined as FakeNotifications | undefined,
 }));
 
 vi.mock("~/db", () => ({
@@ -20,6 +26,13 @@ vi.mock("~/db", () => ({
     return testState.db;
   },
 }));
+
+vi.mock("~/lib/notifications.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/lib/notifications.server")>()),
+  defaultNotifications: async () => testState.notifications,
+}));
+
+vi.mock("~/lib/mailer.server", () => ({ sendEmail: vi.fn() }));
 
 import { action as requestRefund } from "./courses.$slug.refund";
 import { loader as loadCourse } from "./courses.$slug";
@@ -36,7 +49,13 @@ describe("refund request journey", () => {
       headers: { Cookie: cookie },
       ...(reason === undefined
         ? {}
-        : { method: "POST", body: new URLSearchParams({ reason }) }),
+        : {
+            method: "POST",
+            body: new URLSearchParams({
+              reason,
+              purchaseId: String(purchase.id),
+            }),
+          }),
     });
   }
 
@@ -59,6 +78,8 @@ describe("refund request journey", () => {
   beforeEach(async () => {
     db = createTestDb();
     testState.db = db;
+    testState.notifications = fakeNotifications();
+    vi.mocked(sendEmail).mockReset();
     base = seedBaseData(db);
     db.update(courses)
       .set({ price: 10000 })
@@ -81,7 +102,6 @@ describe("refund request journey", () => {
       new Request("http://localhost"),
       base.user.id
     );
-    vi.spyOn(console, "log").mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -97,20 +117,17 @@ describe("refund request journey", () => {
     const refundRequest = db.select().from(refunds).get()!;
     expect(refundRequest).toMatchObject({
       purchaseId: purchase.id,
-      status: RefundStatus.Requested,
+      status: RefundStatus.Open,
       reason: "This course does not fit my needs.",
       amountRefunded: null,
       resolvedAt: null,
     });
-    expect(response.headers.get("Location")).toBe(
-      `/settings?refund_requested=${refundRequest.id}#refund-request-${refundRequest.id}`
-    );
+    expect(response.headers.get("Location")).toBe("/settings");
 
     const settings = await loadSettings(
       args(request(response.headers.get("Location")!))
     );
-    expect(settings.receivedRefundRequestId).toBe(refundRequest.id);
-    expect(settings.pendingRefundRequests).toMatchObject([
+    expect(settings.refundRequests).toMatchObject([
       {
         id: refundRequest.id,
         amountPaid: 8000,
@@ -122,21 +139,21 @@ describe("refund request journey", () => {
       args(request(`/courses/${base.course.slug}`))
     );
     expect(course.enrolled).toBe(true);
-    expect(course.refundOffer).toEqual({
-      status: "pending",
-      requestId: refundRequest.id,
+    expect(course.refundOffer).toBeNull();
+    expect(sendEmail).toHaveBeenCalledExactlyOnceWith({
+      to: base.user.email,
+      subject: expect.stringContaining("Test Course"),
+      body: expect.stringContaining("$80.00"),
     });
-    expect(console.log).toHaveBeenCalledOnce();
-    expect(console.log).toHaveBeenCalledWith(
-      expect.stringContaining("Refund request received: Test Course")
-    );
-    expect(console.log).toHaveBeenCalledWith(
-      expect.stringContaining("Amount requested: $80.00")
-    );
+    expect(testState.notifications!.feedOf(base.user.id)).toMatchObject([
+      {
+        kind: "refund-requested",
+        data: { refundRequestId: refundRequest.id, amount: "$80.00" },
+      },
+    ]);
 
     const laterVisit = await loadSettings(args(request("/settings")));
-    expect(laterVisit.receivedRefundRequestId).toBeNull();
-    expect(laterVisit.pendingRefundRequests).toHaveLength(1);
+    expect(laterVisit.refundRequests).toHaveLength(1);
   });
 
   it.each([
@@ -160,19 +177,19 @@ describe("refund request journey", () => {
         args(request(`/courses/${base.course.slug}`))
       );
       expect(course.refundOffer).toMatchObject({
-        status: "eligible",
+        purchaseId: purchase.id,
         amount: 8000,
       });
       await submit();
-      expect(console.log).toHaveBeenCalledWith(
-        expect.stringContaining("Amount requested: $80.00")
+      expect(sendEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ body: expect.stringContaining("$80.00") })
       );
       const settings = await loadSettings(args(request("/settings")));
-      expect(settings.pendingRefundRequests[0].amountPaid).toBe(8000);
+      expect(settings.refundRequests[0].amountPaid).toBe(8000);
     }
   );
 
-  it("shows the existing request on retries and preserves its original reason", async () => {
+  it("rejects retries and preserves the original request and confirmation", async () => {
     await submit("The original reason for requesting a refund.");
     const original = db.select().from(refunds).get()!;
     db.update(purchases)
@@ -180,41 +197,35 @@ describe("refund request journey", () => {
       .where(eq(purchases.id, purchase.id))
       .run();
 
-    const response = await submit("x");
-    expect(response).toBeInstanceOf(Response);
-    if (!(response instanceof Response)) throw new Error("Expected a redirect");
-    expect(response.headers.get("Location")).toBe(
-      `/settings#refund-request-${original.id}`
-    );
+    await expect(
+      submit("Another valid reason for requesting a refund.")
+    ).rejects.toMatchObject({
+      init: { status: 409 },
+    });
     expect(db.select().from(refunds).all()).toEqual([original]);
-    expect(console.log).toHaveBeenCalledOnce();
+    expect(sendEmail).toHaveBeenCalledOnce();
 
     const course = await loadCourse(
       args(request(`/courses/${base.course.slug}`))
     );
-    expect(course.refundOffer).toEqual({
-      status: "pending",
-      requestId: original.id,
-    });
+    expect(course.refundOffer).toBeNull();
   });
 
   it("creates only one request and confirmation for simultaneous submissions", async () => {
-    const responses = await Promise.all([
+    const responses = await Promise.allSettled([
       submit("The first reason for a refund request."),
       submit("The second reason for a refund request."),
     ]);
     const saved = db.select().from(refunds).all();
     expect(saved).toHaveLength(1);
-    expect(console.log).toHaveBeenCalledOnce();
-    const locations = responses.map((response) => {
-      if (!(response instanceof Response))
-        throw new Error("Expected a redirect");
-      return response.headers.get("Location");
-    });
-    expect(locations).toContain(
-      `/settings?refund_requested=${saved[0].id}#refund-request-${saved[0].id}`
-    );
-    expect(locations).toContain(`/settings#refund-request-${saved[0].id}`);
+    expect(sendEmail).toHaveBeenCalledOnce();
+    expect(
+      responses.filter((response) => response.status === "fulfilled")
+    ).toHaveLength(1);
+    expect(
+      responses.filter((response) => response.status === "rejected")
+    ).toMatchObject([{ reason: { init: { status: 409 } } }]);
+    expect(testState.notifications!.feedOf(base.user.id)).toHaveLength(1);
   });
 
   it("returns validation feedback without recording or confirming an invalid request", async () => {
@@ -228,7 +239,8 @@ describe("refund request journey", () => {
       },
     });
     expect(db.select().from(refunds).all()).toEqual([]);
-    expect(console.log).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(testState.notifications!.sent).toEqual([]);
   });
 
   it("keeps the closed refund window in force for new requests", async () => {
@@ -238,7 +250,8 @@ describe("refund request journey", () => {
       .run();
     await expect(submit()).rejects.toMatchObject({ init: { status: 403 } });
     expect(db.select().from(refunds).all()).toEqual([]);
-    expect(console.log).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(testState.notifications!.sent).toEqual([]);
   });
 
   it("does not show or acknowledge another customer's request", async () => {
@@ -251,7 +264,6 @@ describe("refund request journey", () => {
     const settings = await loadSettings(
       args(request(`/settings?refund_requested=${saved.id}`))
     );
-    expect(settings.pendingRefundRequests).toEqual([]);
-    expect(settings.receivedRefundRequestId).toBeNull();
+    expect(settings.refundRequests).toEqual([]);
   });
 });

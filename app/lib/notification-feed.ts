@@ -120,6 +120,8 @@ export interface NotificationFeed {
   getState(): FeedState;
   /** Calls `listener` whenever the state changes. Returns an unsubscribe. */
   subscribe(listener: () => void): () => void;
+  /** Refreshes the feed after changes made outside this browser. */
+  refresh(): Promise<void>;
   /** Loads the next page of older Notifications. No-op when there are none. */
   loadMore(): Promise<void>;
   /** Marks these read; skips already-read ones and never sends an empty batch. */
@@ -146,6 +148,7 @@ export function emptyNotificationFeed(): NotificationFeed {
   return {
     getState: () => EMPTY_STATE,
     subscribe: () => () => {},
+    refresh: async () => {},
     loadMore: async () => {},
     markRead: async () => {},
     markAllSeen: async () => {},

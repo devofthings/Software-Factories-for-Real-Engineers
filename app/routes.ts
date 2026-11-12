@@ -8,6 +8,7 @@ import {
 export default [
   index("routes/home.tsx"),
   layout("routes/layout.app.tsx", [
+    route("knock-vendor-prototype", "routes/knock-vendor.prototype.tsx"),
     route("dashboard", "routes/dashboard.tsx"),
     route("courses", "routes/courses.tsx"),
     route("courses/:slug", "routes/courses.$slug.tsx"),
@@ -50,6 +51,7 @@ export default [
   ]),
   route("signup", "routes/signup.tsx"),
   route("login", "routes/login.tsx"),
+  route("api/knock-vendor-prototype", "routes/api.knock-vendor.prototype.ts"),
   route("api/switch-user", "routes/api.switch-user.ts"),
   route("api/logout", "routes/api.logout.ts"),
   route("api/video-tracking", "routes/api.video-tracking.ts"),

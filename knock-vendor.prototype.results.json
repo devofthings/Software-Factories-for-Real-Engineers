@@ -1,0 +1,43 @@
+{
+  "signedUserTokens": {
+    "status": "pass",
+    "selectedUsers": [
+      {
+        "id": 5,
+        "name": "Emma Wilson",
+        "role": "student"
+      },
+      {
+        "id": 6,
+        "name": "James Park",
+        "role": "student"
+      }
+    ],
+    "missingTokenStatus": 400,
+    "crossUserTokenStatus": 403
+  },
+  "discussionReply": {
+    "status": "pass",
+    "eventId": 2,
+    "recipient": "cadence-vendor-prototype-5",
+    "workflowRunId": "cc4d54e8-918e-5f3f-84a9-2ec23d1f04d4",
+    "messageId": "3M0CartDdA4r7SlwSQ3tsC3V9AF"
+  },
+  "headlessFeed": {
+    "status": "pass",
+    "unreadBeforeRead": 2,
+    "unreadAfterSeen": 2,
+    "unreadAfterRead": 1
+  },
+  "preferences": {
+    "status": "pass",
+    "category": "cadence-vendor-prototype-enrollment",
+    "offBeforeOptIn": true,
+    "offFeedCount": 0,
+    "onFeedCount": 1,
+    "suppressedRunId": "a116062c-3ad9-550f-8e2a-73d11797d6f7",
+    "enabledRunId": "644e133b-bf02-51a7-be57-7dc2722f2351",
+    "restoredToOff": true,
+    "bootstrap": "Recipient category initialized off before first trigger"
+  }
+}
